@@ -29,7 +29,7 @@ $("#lockPassword").onkeydown = e => { if (e.key === "Enter") unlock(); };
 setTimeout(() => $("#lockPassword").focus(), 100);
 
 /* ---- STATE ---- */
-const S = { tabs:[], activeId:null, bookmarks:[], files:[], activeFileId:null, cloak:false,
+const S = { tabs:[], activeId:null, bookmarks:[], files:[], activeFileId:null,
   settings:{theme:"aurora",accent:"#8a7cff",accent2:"#ff8acd",style:"full",glass:60,wisp:"",publicWisp:true,transport:"epoxy",homepage:"",logLimit:200} };
 
 const PUBLIC_WISP = "wss://anura.pro/";
@@ -39,7 +39,7 @@ function save() {
   clearTimeout(_st); _st = setTimeout(async () => {
     try { await fetch("/api/state",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({tabs:S.tabs.map(t=>({id:t.id,title:t.title,url:t.url,kind:t.kind})),
-        activeId:S.activeId,bookmarks:S.bookmarks,files:S.files,activeFileId:S.activeFileId,cloak:S.cloak,settings:S.settings})}); }catch{}
+        activeId:S.activeId,bookmarks:S.bookmarks,files:S.files,activeFileId:S.activeFileId,settings:S.settings})}); }catch{}
   }, 350);
 }
 
@@ -82,7 +82,6 @@ async function bootApp() {
     if (d.settings) Object.assign(S.settings, d.settings);
     if (d.bookmarks) S.bookmarks = d.bookmarks;
     if (d.files?.length) S.files = d.files;
-    if (d.cloak) S.cloak = d.cloak;
     applyTheme();
     if (d.tabs?.length) {
       d.tabs.forEach(t => mkTab(t.url,{title:t.title,id:t.id,silent:true}));
