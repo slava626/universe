@@ -246,6 +246,7 @@ const bundleOpts = {
 app.use("/scram/", express.static(path.join(mercury, "scramjet/dist"), bundleOpts));
 app.use("/baremux/", express.static(path.join(mercury, "bare-mux/dist"), bundleOpts));
 app.use("/epoxy/", express.static(path.join(mercury, "epoxy-transport/dist"), bundleOpts));
+app.use("/libcurl/", express.static(path.join(mercury, "libcurl-transport/dist"), bundleOpts));
 
 app.post("/api/run", async (req, res) => {
   const { language, files, stdin } = req.body || {};

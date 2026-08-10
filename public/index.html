@@ -29,7 +29,7 @@
   <aside id="sidebar" class="sidebar">
     <div class="aurora-orb"></div>
     <div class="sidebar-top">
-      <button id="sidebarToggle" class="icon-btn" title="Toggle sidebar (Ctrl+B)">
+      <button id="sidebarToggle" class="icon-btn" title="Requests & Settings">
         <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <div class="brand">
@@ -80,7 +80,43 @@
       </form>
       <button id="codeToggleTop" class="icon-btn sm"><svg viewBox="0 0 24 24"><path d="M8 4 2 12l6 8M16 4l6 8-6 8"/></svg></button>
     </div>
-    <div id="viewport"></div>
+    <div id="viewport">
+      <div id="devtools" class="devtools hidden">
+        <div class="dt-tabs">
+          <button class="dt-tab active" data-dt="requests">Requests <span id="reqCount" class="dt-count"></span></button>
+          <button class="dt-tab" data-dt="settings">Settings</button>
+          <span class="dt-spacer"></span>
+          <button id="dtClose" class="dt-tab dt-close">✕ Back to browser</button>
+        </div>
+        <div class="dt-body">
+          <!-- REQUESTS -->
+          <div class="dt-view" id="dtRequests">
+            <div class="dt-req-bar">
+              <input id="reqSearch" class="dt-search" placeholder="Search requests" autocomplete="off" spellcheck="false" />
+              <button id="reqClear" class="ghost-btn">Clear</button>
+            </div>
+            <div class="dt-req-split">
+              <div class="dt-req-list" id="reqList"><div class="dt-empty" style="padding:14px">No requests yet — browse a site through Scramjet.</div></div>
+              <div class="dt-req-detail" id="reqDetail"><div class="dt-empty">Select a request to see details.</div></div>
+            </div>
+          </div>
+          <!-- SETTINGS -->
+          <div class="dt-view hidden" id="dtSettings">
+            <div class="dt-settings">
+              <h3>Proxy settings</h3>
+              <p class="dt-sub">Update the proxy engine without a rebuild. Changes apply on reconnect.</p>
+              <div class="dt-field"><label>Engine status</label><div class="wisp-status" id="wispStatus2">Detecting…</div></div>
+              <div class="dt-field"><label>Wisp server</label><input id="setWisp" class="modal-input" placeholder="Leave blank for self-hosted (/wisp/)" spellcheck="false" autocomplete="off" /><div class="dt-hint">Example: <code>wss://anura.pro/</code> · blank = this server's <code>/wisp/</code></div></div>
+              <div class="dt-field"><label>Transport</label><select id="setTransport" class="lang-select2"><option value="epoxy">Epoxy</option><option value="libcurl">Libcurl</option></select><div class="dt-hint">Client used to dispatch outbound requests over Wisp.</div></div>
+              <div class="dt-field"><label class="dt-check"><input type="checkbox" id="setPublicWisp" /> Allow public wisp fallback (anura.pro)</label></div>
+              <div class="dt-field"><label>Home page URL</label><input id="setHome" class="modal-input" placeholder="https://www.google.com" spellcheck="false" autocomplete="off" /><div class="dt-hint">Opened when you create a new tab. Blank = the new-tab page.</div></div>
+              <div class="dt-field"><label>Request log limit</label><input id="setLogLimit" class="modal-input" type="number" min="10" max="1000" /><div class="dt-hint">Maximum number of captured requests kept in memory.</div></div>
+              <div class="dt-actions"><button id="setApply" class="run-btn">Apply &amp; reconnect</button><button id="setReset" class="ghost-btn">Reset defaults</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
   <section id="codePanel" class="code-panel hidden">
@@ -156,13 +192,6 @@
       </div>
     </div>
     <div class="theme-section"><div class="theme-label">Glass blur</div><input type="range" id="glassRange" min="0" max="100" value="60" /></div>
-    <div class="theme-section">
-      <div class="theme-label">Proxy engine</div>
-      <div class="wisp-status" id="wispStatus">Detecting…</div>
-      <input type="text" id="wispInput" class="modal-input" placeholder="Custom wisp server (leave blank for self-hosted)" spellcheck="false" autocomplete="off" />
-      <label class="cloak-label" style="margin-top:8px"><input type="checkbox" id="publicWispToggle" /> Allow public wisp fallback (anura.pro)</label>
-      <button id="wispApply" class="ghost-btn" style="margin-top:8px">Apply &amp; reconnect</button>
-    </div>
   </div>
 </div>
 

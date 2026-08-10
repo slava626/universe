@@ -30,7 +30,7 @@ setTimeout(() => $("#lockPassword").focus(), 100);
 
 /* ---- STATE ---- */
 const S = { tabs:[], activeId:null, bookmarks:[], files:[], activeFileId:null, cloak:false,
-  settings:{theme:"aurora",accent:"#8a7cff",accent2:"#ff8acd",style:"full",glass:60,wisp:"",publicWisp:true} };
+  settings:{theme:"aurora",accent:"#8a7cff",accent2:"#ff8acd",style:"full",glass:60,wisp:"",publicWisp:true,transport:"epoxy",homepage:"",logLimit:200} };
 
 const PUBLIC_WISP = "wss://anura.pro/";
 
@@ -132,9 +132,10 @@ async function initScramjet() {
       selfHosted,
       S.settings.publicWisp !== false ? PUBLIC_WISP : null,
     ].filter(Boolean))];
+    const tpath = S.settings.transport === "libcurl" ? "/libcurl/index.mjs" : "/epoxy/index.mjs";
     for (const wisp of candidates) {
       try {
-        await conn.setTransport("/epoxy/index.mjs", [{ wisp }]);
+        await conn.setTransport(tpath, [{ wisp }]);
         if (await wispHealthCheck()) {
           scramjetReady = true; activeWisp = wisp;
           console.log("Scramjet proxy ready via", wisp);
@@ -260,7 +261,7 @@ function go(input) {
 
 /* ---- TOOLBAR ---- */
 $("#omniboxForm").onsubmit=e=>{ e.preventDefault(); go($("#omnibox").value); $("#omnibox").blur(); };
-$("#newTabBtn").onclick=()=>mkTab("");
+$("#newTabBtn").onclick=()=>mkTab(S.settings.homepage||"");
 $("#backBtn").onclick=()=>{ try{ curTab()?.frame?.contentWindow?.history.back(); }catch{} };
 $("#fwdBtn").onclick=()=>{ try{ curTab()?.frame?.contentWindow?.history.forward(); }catch{} };
 $("#reloadBtn").onclick=()=>{ const t=curTab(); if(t?.frame) t.frame.src=t.frame.src; };
@@ -270,7 +271,7 @@ $("#starBtn").onclick=()=>{
   if(i>=0) S.bookmarks.splice(i,1); else S.bookmarks.unshift({url:t.url,title:t.title});
   star(); renderBookmarks(); save();
 };
-$("#sidebarToggle").onclick=()=>$("#sidebar").classList.toggle("collapsed");
+$("#sidebarToggle").onclick=()=>toggleDevtools();
 const toggleCode=()=>{
   const p=$("#codePanel"), opening=p.classList.contains("hidden");
   p.classList.toggle("hidden");
@@ -344,25 +345,115 @@ function openTheme(){
   });
   $("#glassRange").value=S.settings.glass;
   $("#glassRange").oninput=e=>{ S.settings.glass=+e.target.value; applyTheme(); save(); };
-  $("#wispInput").value=S.settings.wisp||"";
-  $("#publicWispToggle").checked=S.settings.publicWisp!==false;
-  updateWispStatus();
-  $("#wispApply").onclick=async()=>{
-    S.settings.wisp=$("#wispInput").value.trim();
-    S.settings.publicWisp=$("#publicWispToggle").checked;
-    save();
-    $("#wispStatus").textContent="Reconnecting…";
-    await initScramjet();
-    updateWispStatus();
-  };
 }
 function updateWispStatus(){
-  const el=$("#wispStatus"); if(!el) return;
+  const el=$("#wispStatus2"); if(!el) return;
   el.classList.toggle("ok",scramjetReady);
   el.textContent=scramjetReady ? ("✓ Scramjet active — "+activeWisp) : "Server /proxy (Scramjet inactive)";
 }
 $("#themeBtn").onclick=openTheme;
 $("#closeThemePanel").onclick=()=>$("#themePanel").classList.add("hidden");
+
+/* ---- DEVTOOLS: Requests + Settings (Scramjet-style) ---- */
+let reqLog=[], dtTab="requests", selReqId=null;
+
+function toggleDevtools(){
+  const d=$("#devtools"), opening=d.classList.contains("hidden");
+  d.classList.toggle("hidden");
+  if(opening) setDtTab(dtTab);
+}
+function setDtTab(t){
+  dtTab=t;
+  document.querySelectorAll(".dt-tab[data-dt]").forEach(b=>b.classList.toggle("active",b.dataset.dt===t));
+  $("#dtRequests").classList.toggle("hidden",t!=="requests");
+  $("#dtSettings").classList.toggle("hidden",t!=="settings");
+  if(t==="requests") renderReqList();
+  if(t==="settings") fillSettings();
+}
+document.querySelectorAll(".dt-tab[data-dt]").forEach(b=>b.onclick=()=>setDtTab(b.dataset.dt));
+$("#dtClose").onclick=()=>$("#devtools").classList.add("hidden");
+
+/* request capture (messages from the Scramjet service worker) */
+function pushReqMsg(m){
+  if(m.kind==="req"){
+    reqLog.push({id:m.id,url:m.url,method:m.method,destination:m.destination,reqHeaders:m.reqHeaders,ts:m.ts,status:null});
+    const lim=+S.settings.logLimit||200; if(reqLog.length>lim) reqLog=reqLog.slice(-lim);
+  } else if(m.kind==="res"){
+    const r = m.id!=null ? reqLog.find(x=>x.id===m.id)
+                         : [...reqLog].reverse().find(x=>x.url===m.url && x.status==null);
+    if(r){ r.status=m.status; r.statusText=m.statusText; r.resHeaders=m.headers; r.contentType=m.contentType; r.dur=Math.max(0,m.ts-r.ts); }
+  }
+  const c=$("#reqCount"); if(c) c.textContent=reqLog.length?("("+reqLog.length+")"):"";
+  if(!$("#devtools").classList.contains("hidden") && dtTab==="requests"){
+    renderReqList();
+    if(selReqId!=null){ const r=reqLog.find(x=>x.id===selReqId); if(r) renderReqDetail(r); }
+  }
+}
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.addEventListener("message",e=>{ const m=e.data; if(m&&(m.kind==="req"||m.kind==="res")) pushReqMsg(m); });
+}
+
+const _mClass=m=>"m-"+String(m||"GET").toLowerCase();
+const _sClass=s=> s==null?"s-pending":(s<300?"s-ok":(s<400?"s-redir":"s-err"));
+function _reqFiltered(){ const q=($("#reqSearch").value||"").toLowerCase().trim(); return q?reqLog.filter(r=>r.url.toLowerCase().includes(q)):reqLog; }
+function renderReqList(){
+  const list=$("#reqList"); if(!list) return;
+  const items=_reqFiltered().slice().reverse();
+  if(!items.length){ list.innerHTML='<div class="dt-empty" style="padding:14px">No requests yet — browse a site through Scramjet.</div>'; return; }
+  list.innerHTML="";
+  items.forEach(r=>{
+    const d=document.createElement("div"); d.className="req-row"+(r.id===selReqId?" active":"");
+    const short=r.url.replace(/^https?:\/\//,"");
+    d.innerHTML=`<div class="req-line1"><span class="req-method ${_mClass(r.method)}">${esc(r.method||"GET")}</span><span class="req-url">${esc(short)}</span></div>`+
+      `<div class="req-line2"><span class="req-status ${_sClass(r.status)}">${r.status==null?"…":r.status}</span>`+
+      `${r.dur!=null?`<span class="req-dur">${r.dur}ms</span>`:""}`+
+      `${r.contentType?`<span class="req-ct">${esc(r.contentType.split(";")[0])}</span>`:""}</div>`;
+    d.onclick=()=>{ selReqId=r.id; renderReqList(); renderReqDetail(r); };
+    list.appendChild(d);
+  });
+}
+function _kv(obj){
+  if(!obj||!Object.keys(obj).length) return '<div class="dt-empty">none</div>';
+  return '<div class="kv">'+Object.entries(obj).map(([k,v])=>`<div class="kv-k">${esc(k)}</div><div class="kv-v break">${esc(String(v))}</div>`).join("")+'</div>';
+}
+function renderReqDetail(r){
+  const el=$("#reqDetail"); if(!el) return;
+  el.innerHTML=
+    `<div class="dt-sec-title">General</div>`+
+    `<div class="kv">`+
+    `<div class="kv-k">Request URL</div><div class="kv-v break">${esc(r.url)}</div>`+
+    `<div class="kv-k">Method</div><div class="kv-v">${esc(r.method||"GET")}</div>`+
+    `<div class="kv-k">Status</div><div class="kv-v">${r.status==null?"pending":esc(r.status+" "+(r.statusText||""))}</div>`+
+    `<div class="kv-k">Duration</div><div class="kv-v">${r.dur!=null?r.dur+"ms":"—"}</div>`+
+    `<div class="kv-k">Destination</div><div class="kv-v">${esc(r.destination||"unknown")}</div>`+
+    `<div class="kv-k">Content Type</div><div class="kv-v">${esc(r.contentType||"—")}</div>`+
+    `</div>`+
+    `<div class="dt-sec-title">Response Headers</div>${_kv(r.resHeaders)}`+
+    `<div class="dt-sec-title">Request Headers</div>${_kv(r.reqHeaders)}`;
+}
+$("#reqSearch").oninput=renderReqList;
+$("#reqClear").onclick=()=>{ reqLog=[]; selReqId=null; $("#reqCount").textContent=""; renderReqList(); $("#reqDetail").innerHTML='<div class="dt-empty">Select a request to see details.</div>'; };
+
+/* settings page */
+function fillSettings(){
+  $("#setWisp").value=S.settings.wisp||"";
+  $("#setTransport").value=S.settings.transport||"epoxy";
+  $("#setPublicWisp").checked=S.settings.publicWisp!==false;
+  $("#setHome").value=S.settings.homepage||"";
+  $("#setLogLimit").value=+S.settings.logLimit||200;
+  updateWispStatus();
+}
+$("#setApply").onclick=async()=>{
+  S.settings.wisp=$("#setWisp").value.trim();
+  S.settings.transport=$("#setTransport").value;
+  S.settings.publicWisp=$("#setPublicWisp").checked;
+  S.settings.homepage=$("#setHome").value.trim();
+  S.settings.logLimit=Math.max(10,Math.min(1000,+$("#setLogLimit").value||200));
+  save();
+  $("#wispStatus2").textContent="Reconnecting…"; $("#wispStatus2").classList.remove("ok");
+  await initScramjet();
+};
+$("#setReset").onclick=()=>{ Object.assign(S.settings,{wisp:"",transport:"epoxy",publicWisp:true,homepage:"",logLimit:200}); save(); fillSettings(); };
 
 /* ---- CODE EDITOR (DevSpace-style) ---- */
 const FE_COLORS={html:"#e34c26",htm:"#e34c26",css:"#264de4",js:"#f7df1e",mjs:"#f7df1e",json:"#6ee7b7",ts:"#3178c6",jsx:"#61dafb",tsx:"#3178c6",py:"#3572a5",md:"#88aa99",svg:"#ff9800",txt:"#9aa"};
