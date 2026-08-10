@@ -74,6 +74,7 @@ document.getElementById("btn").addEventListener("click", () => {
 }
 
 async function bootApp() {
+  initScramjet();
   try {
     const d = await (await fetch("/api/state")).json();
     if (d.settings) Object.assign(S.settings, d.settings);
@@ -95,12 +96,54 @@ async function bootApp() {
   renderAll();
 }
 
-/* ---- PROXY ---- */
-function toProxy(url) {
+/* ---- PROXY (Scramjet SW when available, server /proxy fallback) ---- */
+let scramjet = null, scramjetReady = false;
+
+async function initScramjet() {
+  if (!window.isSecureContext || !("serviceWorker" in navigator) || typeof $scramjetLoadController === "undefined") return;
+  try {
+    const { ScramjetController } = $scramjetLoadController();
+    scramjet = new ScramjetController({
+      prefix: "/scramjet/",
+      files: { wasm: "/scram/scramjet.wasm.wasm", all: "/scram/scramjet.all.js", sync: "/scram/scramjet.sync.js" },
+    });
+    await scramjet.init();
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    const wispUrl = (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/wisp/";
+    const conn = new BareMux.BareMuxConnection("/baremux/worker.js");
+    await conn.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
+    // Health check: only prefer Scramjet if it can actually complete a fetch.
+    // On networks where the wisp transport is blocked or TLS is intercepted, we
+    // stay on the working server-side /proxy fallback instead of erroring.
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(location.origin + scramjet.encodeUrl("https://example.com"), { signal: ctrl.signal }).catch(() => null);
+    clearTimeout(to);
+    if (res && res.ok) {
+      scramjetReady = true;
+      console.log("Scramjet proxy ready");
+    } else {
+      console.warn("Scramjet transport can't fetch here; using /proxy fallback");
+      scramjet = null;
+    }
+  } catch (e) {
+    console.warn("Scramjet unavailable, using /proxy fallback:", e);
+    scramjet = null; scramjetReady = false;
+  }
+}
+
+function serverProxy(url) {
   try {
     const b = btoa(unescape(encodeURIComponent(url))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
     return location.origin + "/proxy/" + b;
   } catch { return url; }
+}
+function toProxy(url) {
+  if (scramjetReady && scramjet) {
+    try { const e = scramjet.encodeUrl(url); return /^https?:/i.test(e) ? e : location.origin + e; } catch {}
+  }
+  return serverProxy(url);
 }
 function resolve(v) {
   const t=(v||"").trim(); if(!t) return null;
@@ -394,10 +437,5 @@ document.onkeydown=e=>{
   if(/^[1-9]$/.test(k)){ const t=S.tabs[+k-1]; if(t){ e.preventDefault(); switchTab(t.id); } }
   if(k==="tab"){ e.preventDefault(); const i=S.tabs.findIndex(t=>t.id===S.activeId); switchTab(S.tabs[(e.shiftKey?(i-1+S.tabs.length):i+1)%S.tabs.length].id); }
 };
-
-/* ---- SW ---- */
-if("serviceWorker"in navigator){
-  navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(()=>{});
-}
 
 });

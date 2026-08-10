@@ -6,6 +6,7 @@ import { URL } from "node:url";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
+import { server as wisp } from "@mercuryworkshop/wisp-js/server";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8080;
@@ -234,6 +235,18 @@ app.all(/^\/proxy\/(.+)$/, async (req, res) => {
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Scramjet + bare-mux + epoxy client bundles (served for the SW-based proxy).
+const mercury = path.join(__dirname, "node_modules", "@mercuryworkshop");
+const bundleOpts = {
+  setHeaders(res, p) {
+    if (p.endsWith(".wasm")) res.setHeader("Content-Type", "application/wasm");
+    else if (p.endsWith(".mjs") || p.endsWith(".js")) res.setHeader("Content-Type", "text/javascript");
+  },
+};
+app.use("/scram/", express.static(path.join(mercury, "scramjet/dist"), bundleOpts));
+app.use("/baremux/", express.static(path.join(mercury, "bare-mux/dist"), bundleOpts));
+app.use("/epoxy/", express.static(path.join(mercury, "epoxy-transport/dist"), bundleOpts));
+
 app.post("/api/run", async (req, res) => {
   const { language, files, stdin } = req.body || {};
   if (!language || !files?.length)
@@ -262,6 +275,12 @@ app.post("/api/state", (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n  🪐  Universe is running\n      → http://localhost:${PORT}\n`);
+});
+
+// Wisp WebSocket endpoint — the transport backend Scramjet's epoxy client uses.
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.startsWith("/wisp/")) wisp.routeRequest(req, socket, head);
+  else socket.destroy();
 });
