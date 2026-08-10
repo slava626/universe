@@ -248,22 +248,6 @@ app.use("/baremux/", express.static(path.join(mercury, "bare-mux/dist"), bundleO
 app.use("/epoxy/", express.static(path.join(mercury, "epoxy-transport/dist"), bundleOpts));
 app.use("/libcurl/", express.static(path.join(mercury, "libcurl-transport/dist"), bundleOpts));
 
-app.post("/api/run", async (req, res) => {
-  const { language, files, stdin } = req.body || {};
-  if (!language || !files?.length)
-    return res.status(400).json({ error: "language and files are required" });
-  try {
-    const r = await fetch("https://emkc.org/api/v2/piston/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language, version: "*", files, stdin: stdin || "" }),
-    });
-    res.json(await r.json());
-  } catch (err) {
-    res.status(502).json({ error: "runner unreachable", detail: String(err) });
-  }
-});
-
 const dataFile = path.join(__dirname, "data", "state.json");
 fs.mkdirSync(path.dirname(dataFile), { recursive: true });
 if (!fs.existsSync(dataFile)) fs.writeFileSync(dataFile, "{}");
