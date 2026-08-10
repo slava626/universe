@@ -41,6 +41,38 @@ function save() {
   }, 350);
 }
 
+function defaultFiles() {
+  return [
+    { id: uid(), name: "index.html", content: `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+</head>
+<body>
+  <h1>Hello, Universe 🌌</h1>
+  <button id="btn">Click me</button>
+</body>
+</html>` },
+    { id: uid(), name: "style.css", content: `body {
+  font-family: system-ui, sans-serif;
+  display: grid; place-items: center;
+  height: 100vh; margin: 0;
+  background: #0e0f14; color: #f0f0f0;
+}
+button {
+  margin-top: 16px; padding: 10px 20px;
+  border: none; border-radius: 10px;
+  background: #8a7cff; color: #fff;
+  font-size: 15px; cursor: pointer;
+}` },
+    { id: uid(), name: "script.js", content: `console.log("Ready!");
+document.getElementById("btn").addEventListener("click", () => {
+  console.log("Clicked at", new Date().toLocaleTimeString());
+  document.querySelector("h1").textContent = "You clicked! ✨";
+});` },
+  ];
+}
+
 async function bootApp() {
   try {
     const d = await (await fetch("/api/state")).json();
@@ -53,11 +85,11 @@ async function bootApp() {
       d.tabs.forEach(t => mkTab(t.url,{title:t.title,id:t.id,silent:true}));
       S.activeId = (d.activeId && S.tabs.find(t=>t.id===d.activeId)) ? d.activeId : S.tabs[0]?.id;
     } else mkTab("",{silent:true});
-    if (!S.files.length) S.files=[{id:uid(),name:"main.js",lang:"javascript",content:LANGUAGES[0].starter}];
+    if (!S.files.length) S.files=defaultFiles();
     S.activeFileId = (d.activeFileId && S.files.find(f=>f.id===d.activeFileId)) ? d.activeFileId : S.files[0].id;
   } catch {
     applyTheme(); mkTab("",{silent:true});
-    S.files=[{id:uid(),name:"main.js",lang:"javascript",content:LANGUAGES[0].starter}];
+    S.files=defaultFiles();
     S.activeFileId=S.files[0].id;
   }
   renderAll();
@@ -65,8 +97,10 @@ async function bootApp() {
 
 /* ---- PROXY ---- */
 function toProxy(url) {
-  try { if (typeof self.__uv$config!=="undefined") { const c=self.__uv$config; return location.origin+c.prefix+c.encodeUrl(url); } } catch {}
-  return url;
+  try {
+    const b = btoa(unescape(encodeURIComponent(url))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
+    return location.origin + "/proxy/" + b;
+  } catch { return url; }
 }
 function resolve(v) {
   const t=(v||"").trim(); if(!t) return null;
@@ -108,7 +142,7 @@ function switchTab(id){ S.activeId=id; renderAll(); }
 const curTab = () => S.tabs.find(t=>t.id===S.activeId);
 
 /* ---- RENDER ---- */
-function renderAll(){ renderTabsList(); renderViewport(); renderBookmarks(); renderFileTabs(); renderEditor(); }
+function renderAll(){ renderTabsList(); renderViewport(); renderBookmarks(); renderFileList(); renderFileTabs(); renderEditor(); }
 
 function renderTabsList(){
   const el=$("#tabsList"); el.innerHTML="";
@@ -175,7 +209,11 @@ $("#starBtn").onclick=()=>{
   star(); renderBookmarks(); save();
 };
 $("#sidebarToggle").onclick=()=>$("#sidebar").classList.toggle("collapsed");
-const toggleCode=()=>$("#codePanel").classList.toggle("collapsed");
+const toggleCode=()=>{
+  const p=$("#codePanel"), opening=p.classList.contains("hidden");
+  p.classList.toggle("hidden");
+  if(opening){ if(!_feRan) runCode(); setTimeout(()=>$("#feEditor").focus(),60); }
+};
 $("#codePanelToggle").onclick=toggleCode;
 $("#codeToggleTop").onclick=toggleCode;
 $("#closeCodePanel").onclick=toggleCode;
@@ -248,40 +286,104 @@ function openTheme(){
 $("#themeBtn").onclick=openTheme;
 $("#closeThemePanel").onclick=()=>$("#themePanel").classList.add("hidden");
 
-/* ---- CODE PANEL ---- */
+/* ---- CODE EDITOR (DevSpace-style) ---- */
+const FE_COLORS={html:"#e34c26",htm:"#e34c26",css:"#264de4",js:"#f7df1e",mjs:"#f7df1e",json:"#6ee7b7",ts:"#3178c6",jsx:"#61dafb",tsx:"#3178c6",py:"#3572a5",md:"#88aa99",svg:"#ff9800",txt:"#9aa"};
+const feExt=n=>{ const p=String(n).split("."); return p.length>1?p[p.length-1].toLowerCase():"txt"; };
+const feColor=n=>FE_COLORS[feExt(n)]||"#9aa";
 const curFile=()=>S.files.find(f=>f.id===S.activeFileId);
-function renderFileTabs(){
-  const box=$("#fileTabs"); box.innerHTML="";
-  S.files.forEach(f=>{ const d=document.createElement("div"); d.className="file-tab"+(f.id===S.activeFileId?" active":"");
-    d.innerHTML=`<span>${esc(f.name)}</span><span class="fx"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>`;
-    d.onclick=()=>{ S.activeFileId=f.id; renderFileTabs(); renderEditor(); };
-    d.querySelector(".fx").onclick=e=>{ e.stopPropagation(); if(S.files.length<=1) return;
-      const i=S.files.findIndex(x=>x.id===f.id); S.files.splice(i,1);
-      if(S.activeFileId===f.id) S.activeFileId=S.files[Math.max(0,i-1)].id;
-      renderFileTabs(); renderEditor(); save(); };
-    box.appendChild(d); });
+let _feErr=0, _feAuto, _feRan=false;
+
+function renderFileList(){
+  const list=$("#feFileList"); if(!list) return; list.innerHTML="";
+  S.files.forEach(f=>{
+    const d=document.createElement("div"); d.className="fe-file"+(f.id===S.activeFileId?" active":"");
+    d.innerHTML=`<span class="fe-file-dot" style="background:${feColor(f.name)}"></span><span class="fe-file-name">${esc(f.name)}</span><span class="fe-file-del"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>`;
+    d.onclick=()=>openFile(f.id);
+    d.querySelector(".fe-file-del").onclick=e=>{ e.stopPropagation(); delFile(f.id); };
+    list.appendChild(d);
+  });
 }
-function renderEditor(){ const f=curFile(); if(!f) return; $("#codeEditor").value=f.content;
-  $("#langSelect").innerHTML=LANGUAGES.map(l=>`<option value="${l.id}"${l.id===f.lang?" selected":""}>${l.label}</option>`).join("");
-  $("#cloakToggle").checked=S.cloak; }
-$("#codeEditor").oninput=e=>{ const f=curFile(); if(f){ f.content=e.target.value; save(); } };
-$("#langSelect").onchange=e=>{ const f=curFile(); if(!f) return; const l=getLanguage(e.target.value); f.lang=l.id; f.name=f.name.replace(/\.[^.]+$/,"")+"."+l.ext; renderFileTabs(); save(); };
-$("#addFileBtn").onclick=()=>{ const l=LANGUAGES[0]; const f={id:uid(),name:`file${S.files.length+1}.${l.ext}`,lang:l.id,content:l.starter}; S.files.push(f); S.activeFileId=f.id; renderFileTabs(); renderEditor(); save(); };
-$("#cloakToggle").onchange=e=>{ S.cloak=e.target.checked; save(); };
-$("#runBtn").onclick=async()=>{
-  const f=curFile(); if(!f) return; const l=getLanguage(f.lang); const out=$("#consoleOutput");
-  if(l.piston===null){ out.innerHTML=""; const fr=document.createElement("iframe"); fr.style.cssText="width:100%;height:140px;border:1px solid var(--border);border-radius:8px;background:#fff;"; fr.srcdoc=f.content; out.appendChild(fr); return; }
-  out.textContent="Running…";
-  try{ const r=await fetch("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({language:l.piston,files:[{name:f.name,content:f.content}]})});
-    const d=await r.json(); if(d.error){ out.textContent="Error: "+d.error; return; }
-    out.textContent=[d.compile?.output,d.run?.output].filter(Boolean).join("\n")||"(no output)";
-  }catch(err){ out.textContent="Runner error: "+err.message; }
-};
-const minify=(c,lang)=>{ const cl=["javascript","typescript","java","c","cpp","csharp","go","rust","kotlin","dart","swift","php"]; let r=c;
-  if(cl.includes(lang)) r=r.replace(/\/\*[\s\S]*?\*\//g,"").replace(/(^|[^:])\/\/.*$/gm,"$1");
-  else if(["python","ruby","bash","perl","r"].includes(lang)) r=r.replace(/(^|[^\\])#.*$/gm,"$1");
-  return r.split("\n").map(l=>l.trim()).filter(Boolean).join("\n"); };
-$("#downloadBtn").onclick=()=>{ const f=curFile(); if(!f) return; const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([S.cloak?minify(f.content,f.lang):f.content],{type:"text/plain"})); a.download=f.name; a.click(); URL.revokeObjectURL(a.href); };
+function renderFileTabs(){
+  const bar=$("#feTabs"); if(!bar) return; bar.innerHTML="";
+  S.files.forEach(f=>{
+    const d=document.createElement("div"); d.className="fe-tab"+(f.id===S.activeFileId?" active":"");
+    d.innerHTML=`<span class="fe-tab-dot" style="background:${feColor(f.name)}"></span><span>${esc(f.name)}</span>`;
+    d.onclick=()=>openFile(f.id);
+    bar.appendChild(d);
+  });
+}
+function renderEditor(){ const f=curFile(); if(!f) return; $("#feEditor").value=f.content||""; updateLines(); }
+function stashCurrent(){ const f=curFile(), ta=$("#feEditor"); if(f&&ta) f.content=ta.value; }
+function openFile(id){ stashCurrent(); S.activeFileId=id; renderFileList(); renderFileTabs(); renderEditor(); save(); if($("#autorunToggle").checked) runCode(); }
+function delFile(id){ if(S.files.length<=1) return; const i=S.files.findIndex(f=>f.id===id); S.files.splice(i,1); if(S.activeFileId===id) S.activeFileId=S.files[Math.max(0,i-1)].id; renderFileList(); renderFileTabs(); renderEditor(); save(); }
+
+function updateLines(){
+  const ta=$("#feEditor"), ln=$("#feLines"); if(!ta||!ln) return;
+  const n=(ta.value.match(/\n/g)||[]).length+1; let h="";
+  for(let i=1;i<=n;i++) h+="<span>"+i+"</span>"; ln.innerHTML=h; ln.scrollTop=ta.scrollTop;
+}
+$("#feEditor").onscroll=()=>{ $("#feLines").scrollTop=$("#feEditor").scrollTop; };
+$("#feEditor").oninput=()=>{ stashCurrent(); updateLines(); save(); if($("#autorunToggle").checked){ clearTimeout(_feAuto); _feAuto=setTimeout(runCode,600); } };
+$("#feEditor").onkeydown=e=>{ if(e.key==="Tab"){ e.preventDefault(); const ta=e.target,s=ta.selectionStart; ta.value=ta.value.slice(0,s)+"  "+ta.value.slice(ta.selectionEnd); ta.selectionStart=ta.selectionEnd=s+2; stashCurrent(); updateLines(); } };
+
+/* new file */
+function showNew(){ $("#feNewRow").classList.remove("hidden"); const i=$("#feNewInp"); i.value=""; i.focus(); }
+function hideNew(){ $("#feNewRow").classList.add("hidden"); }
+function createFile(){ const inp=$("#feNewInp"), name=inp.value.trim(); if(!name) return;
+  if(S.files.some(f=>f.name===name)){ inp.classList.add("shake"); setTimeout(()=>inp.classList.remove("shake"),400); return; }
+  const f={id:uid(),name,content:""}; S.files.push(f); hideNew(); S.activeFileId=f.id; renderFileList(); renderFileTabs(); renderEditor(); save(); }
+$("#feAddBtn").onclick=showNew;
+$("#feCreateBtn").onclick=createFile;
+$("#feCancelBtn").onclick=hideNew;
+$("#feNewInp").onkeydown=e=>{ if(e.key==="Enter") createFile(); if(e.key==="Escape") hideNew(); };
+
+/* build a combined runnable document from html/css/js files */
+function buildDoc(withConsole){
+  stashCurrent();
+  const hf=S.files.find(f=>["html","htm"].includes(feExt(f.name)));
+  const cf=S.files.find(f=>feExt(f.name)==="css");
+  const jf=S.files.find(f=>feExt(f.name)==="js");
+  const h=hf?hf.content:"", c=cf?cf.content:"", j=jf?jf.content:"";
+  const fix='<style>html,body{height:auto!important;overflow:auto!important}</style>';
+  const cap=withConsole?'<scr'+'ipt>(function(){var _c=["log","warn","error","info","debug"];_c.forEach(function(m){var o=console[m].bind(console);console[m]=function(){var a=[].slice.call(arguments).map(function(x){try{return typeof x==="object"?JSON.stringify(x,null,2):String(x);}catch(e){return String(x);}}).join(" ");parent.postMessage({type:"fe-console",method:m,message:a},"*");o.apply(console,arguments);};});window.onerror=function(msg,s,l){parent.postMessage({type:"fe-console",method:"error",message:msg+(l?" (line "+l+")":"")},"*");};})();</scr'+'ipt>':"";
+  const head=fix+cap+"<style>"+c+"</style>";
+  const bodyJs="<scr"+"ipt>"+j+"</scr"+"ipt>";
+  let doc;
+  if(/<html|<!doctype/i.test(h)){
+    doc=h;
+    doc=/<\/head>/i.test(doc)?doc.replace(/<\/head>/i,head+"</head>"):head+doc;
+    doc=/<\/body>/i.test(doc)?doc.replace(/<\/body>/i,bodyJs+"</body>"):doc+bodyJs;
+  } else {
+    doc='<!DOCTYPE html><html><head><meta charset="UTF-8">'+head+"</head><body>"+h+bodyJs+"</body></html>";
+  }
+  return doc;
+}
+function runCode(){
+  _feRan=true;
+  clearConsole();
+  const blob=new Blob([buildDoc(true)],{type:"text/html"}), u=URL.createObjectURL(blob);
+  const fr=$("#fePreview"); fr.onload=()=>URL.revokeObjectURL(u); fr.src=u;
+}
+window.addEventListener("message",e=>{ if(e.data&&e.data.type==="fe-console") addConsole(e.data.method,e.data.message); });
+function addConsole(m,msg){
+  const out=$("#feConsole"); const em=out.querySelector(".c-empty"); if(em) em.remove();
+  const icons={log:"›",warn:"!",error:"✕",info:"i",debug:"•"};
+  const el=document.createElement("div"); el.className="c-line "+(m==="debug"?"log":m);
+  el.innerHTML=`<span class="c-icon">${icons[m]||"›"}</span><span>${esc(msg)}</span>`;
+  out.appendChild(el); out.scrollTop=out.scrollHeight;
+  if(m==="error"){ _feErr++; const b=$("#feErrBadge"); b.textContent=_feErr; b.classList.add("show"); }
+}
+function clearConsole(){ _feErr=0; const b=$("#feErrBadge"); b.classList.remove("show"); b.textContent=""; $("#feConsole").innerHTML='<div class="c-empty">Console output will appear here…</div>'; }
+$("#runBtn").onclick=runCode;
+$("#feClearConsole").onclick=clearConsole;
+$("#autorunToggle").onchange=e=>{ if(e.target.checked) runCode(); };
+
+/* download / save / cloak */
+function dlFile(content,name,mime){ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([content],{type:mime||"text/plain"})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),120); }
+$("#dlBtn").onclick=()=>{ stashCurrent(); const map={html:"text/html",css:"text/css",js:"application/javascript",json:"application/json"};
+  S.files.forEach((f,i)=>setTimeout(()=>dlFile(f.content||"",f.name.split("/").pop(),map[feExt(f.name)]||"text/plain"),i*250)); };
+$("#saveAppBtn").onclick=async()=>{ try{ const r=await fetch(location.href); const b=await r.blob(); const a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download="universe.html"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),120); }catch{} };
+$("#cloakCodeBtn").onclick=()=>{ const w=window.open("about:blank","_blank"); if(!w){ alert("Allow popups"); return; } w.document.open(); w.document.write(buildDoc(false)); w.document.close(); };
 
 /* ---- KEYBOARD ---- */
 document.onkeydown=e=>{
@@ -294,8 +396,8 @@ document.onkeydown=e=>{
 };
 
 /* ---- SW ---- */
-if("serviceWorker"in navigator&&location.protocol==="https:"){
-  navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(err=>console.warn("SW:",err));
+if("serviceWorker"in navigator){
+  navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(()=>{});
 }
 
 });
