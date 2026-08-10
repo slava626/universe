@@ -30,7 +30,9 @@ setTimeout(() => $("#lockPassword").focus(), 100);
 
 /* ---- STATE ---- */
 const S = { tabs:[], activeId:null, bookmarks:[], files:[], activeFileId:null, cloak:false,
-  settings:{theme:"aurora",accent:"#8a7cff",accent2:"#ff8acd",style:"full",glass:60} };
+  settings:{theme:"aurora",accent:"#8a7cff",accent2:"#ff8acd",style:"full",glass:60,wisp:"",publicWisp:true} };
+
+const PUBLIC_WISP = "wss://anura.pro/";
 
 let _st;
 function save() {
@@ -97,9 +99,19 @@ async function bootApp() {
 }
 
 /* ---- PROXY (Scramjet SW when available, server /proxy fallback) ---- */
-let scramjet = null, scramjetReady = false;
+let scramjet = null, scramjetReady = false, activeWisp = "";
+
+// Fetch a URL through the current bare-mux transport; true if it actually works.
+async function wispHealthCheck() {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 9000);
+  const res = await fetch(location.origin + scramjet.encodeUrl("https://example.com"), { signal: ctrl.signal }).catch(() => null);
+  clearTimeout(to);
+  return !!(res && res.ok);
+}
 
 async function initScramjet() {
+  scramjet = null; scramjetReady = false; activeWisp = "";
   if (!window.isSecureContext || !("serviceWorker" in navigator) || typeof $scramjetLoadController === "undefined") return;
   try {
     const { ScramjetController } = $scramjetLoadController();
@@ -110,27 +122,34 @@ async function initScramjet() {
     await scramjet.init();
     await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     await navigator.serviceWorker.ready;
-    const wispUrl = (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/wisp/";
     const conn = new BareMux.BareMuxConnection("/baremux/worker.js");
-    await conn.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
-    // Health check: only prefer Scramjet if it can actually complete a fetch.
-    // On networks where the wisp transport is blocked or TLS is intercepted, we
-    // stay on the working server-side /proxy fallback instead of erroring.
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(location.origin + scramjet.encodeUrl("https://example.com"), { signal: ctrl.signal }).catch(() => null);
-    clearTimeout(to);
-    if (res && res.ok) {
-      scramjetReady = true;
-      console.log("Scramjet proxy ready");
-    } else {
-      console.warn("Scramjet transport can't fetch here; using /proxy fallback");
-      scramjet = null;
+    const selfHosted = (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/wisp/";
+    // Try wisp servers in order and use the first that can actually fetch. A
+    // custom server (if set) wins; self-hosted is next; the public wisp is a
+    // last resort for networks where self-hosted wisp can't reach targets.
+    const candidates = [...new Set([
+      S.settings.wisp && S.settings.wisp.trim(),
+      selfHosted,
+      S.settings.publicWisp !== false ? PUBLIC_WISP : null,
+    ].filter(Boolean))];
+    for (const wisp of candidates) {
+      try {
+        await conn.setTransport("/epoxy/index.mjs", [{ wisp }]);
+        if (await wispHealthCheck()) {
+          scramjetReady = true; activeWisp = wisp;
+          console.log("Scramjet proxy ready via", wisp);
+          updateWispStatus();
+          return;
+        }
+      } catch { /* try next wisp */ }
     }
+    console.warn("Scramjet couldn't fetch on any wisp server; using /proxy fallback");
+    scramjet = null;
   } catch (e) {
     console.warn("Scramjet unavailable, using /proxy fallback:", e);
     scramjet = null; scramjetReady = false;
   }
+  updateWispStatus();
 }
 
 function serverProxy(url) {
@@ -325,6 +344,22 @@ function openTheme(){
   });
   $("#glassRange").value=S.settings.glass;
   $("#glassRange").oninput=e=>{ S.settings.glass=+e.target.value; applyTheme(); save(); };
+  $("#wispInput").value=S.settings.wisp||"";
+  $("#publicWispToggle").checked=S.settings.publicWisp!==false;
+  updateWispStatus();
+  $("#wispApply").onclick=async()=>{
+    S.settings.wisp=$("#wispInput").value.trim();
+    S.settings.publicWisp=$("#publicWispToggle").checked;
+    save();
+    $("#wispStatus").textContent="Reconnecting…";
+    await initScramjet();
+    updateWispStatus();
+  };
+}
+function updateWispStatus(){
+  const el=$("#wispStatus"); if(!el) return;
+  el.classList.toggle("ok",scramjetReady);
+  el.textContent=scramjetReady ? ("✓ Scramjet active — "+activeWisp) : "Server /proxy (Scramjet inactive)";
 }
 $("#themeBtn").onclick=openTheme;
 $("#closeThemePanel").onclick=()=>$("#themePanel").classList.add("hidden");

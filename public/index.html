@@ -156,6 +156,13 @@
       </div>
     </div>
     <div class="theme-section"><div class="theme-label">Glass blur</div><input type="range" id="glassRange" min="0" max="100" value="60" /></div>
+    <div class="theme-section">
+      <div class="theme-label">Proxy engine</div>
+      <div class="wisp-status" id="wispStatus">Detecting…</div>
+      <input type="text" id="wispInput" class="modal-input" placeholder="Custom wisp server (leave blank for self-hosted)" spellcheck="false" autocomplete="off" />
+      <label class="cloak-label" style="margin-top:8px"><input type="checkbox" id="publicWispToggle" /> Allow public wisp fallback (anura.pro)</label>
+      <button id="wispApply" class="ghost-btn" style="margin-top:8px">Apply &amp; reconnect</button>
+    </div>
   </div>
 </div>
 
